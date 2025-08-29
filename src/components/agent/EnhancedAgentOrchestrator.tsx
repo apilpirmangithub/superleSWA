@@ -541,8 +541,26 @@ Thank you.`
       // Advanced embedding comparison with multi-augmentation (robust to pose/rotation/flip)
       const simTh = parseFloat(process.env.NEXT_PUBLIC_FACE_SIM_THRESHOLD || '0.86');
       try {
-        const { compareFacesAdvanced } = await import("@/lib/utils/face");
-        const { best, refCount, probeCount } = await compareFacesAdvanced(referenceFile, capture, { rotations: [-25, -15, 0, 15, 25], allowFlip: true });
+        const { getAugmentedEmbeddings, cosineSimilarity, compareFacesAdvanced } = await import("@/lib/utils/face");
+        if (refTemplates && refTemplates.length > 0) {
+          const probe = await getAugmentedEmbeddings(capture, [-25, -15, 0, 15, 25], [false, true]);
+          let best = 0;
+          for (const a of refTemplates) for (const b of probe) best = Math.max(best, cosineSimilarity(a, b));
+          if (best >= simTh) {
+            setAwaitingIdentity(false);
+            setToast('Identity verified ✅');
+            chatAgent.addMessage('agent', `Identity verified (best similarity ${best.toFixed(3)} ≥ ${simTh}). Proceeding to registration.`);
+            chatAgent.processPrompt('Continue Registration', referenceFile, aiDetectionResult);
+            return;
+          } else {
+            setToast('Identity mismatch ❌');
+            chatAgent.addMessage('agent', `Identity check failed (best similarity ${best.toFixed(3)} < ${simTh}). Try again with clearer, front-facing photo.`);
+            chatAgent.addMessage('agent', 'You can take another photo or submit for review.', ['Take Photo', 'Submit for Review']);
+            return;
+          }
+        }
+        // Fallback if templates not ready
+        const { best } = await compareFacesAdvanced(referenceFile, capture, { rotations: [-25, -15, 0, 15, 25], allowFlip: true });
         if (best >= simTh) {
           setAwaitingIdentity(false);
           setToast('Identity verified ✅');
