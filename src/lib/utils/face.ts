@@ -14,24 +14,38 @@ async function ensureFaceLandmarker() {
   if (landmarker) return;
   if (loadingPromise) return loadingPromise;
 
+  const tryLoad = async (moduleBase: string, wasmBase: string) => {
+    // Dynamic ESM import from CDN (works in modern browsers)
+    const mod = await import(/* @vite-ignore */ /* webpackIgnore: true */ moduleBase + "/vision_bundle.mjs");
+    const { FilesetResolver, FaceLandmarker } = mod as any;
+    const filesetResolver = await FilesetResolver.forVisionTasks(wasmBase);
+    const lm = await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions: { modelAssetPath: moduleBase + "/face_landmarker.task" },
+      runningMode: "IMAGE",
+      numFaces: Math.max(1, Math.min(5, isNaN(MAX_FACES) ? 2 : MAX_FACES)),
+      outputFaceBlendshapes: true,
+      outputFacialTransformationMatrixes: true,
+    });
+    return { mod, lm };
+  };
+
   loadingPromise = (async () => {
     if (typeof window === 'undefined') return;
-    try {
-      // Dynamic ESM import from CDN (works in modern browsers)
-      vision = await import(/* @vite-ignore */ /* webpackIgnore: true */ MODULE_URL + "/vision_bundle.mjs");
-      const { FilesetResolver, FaceLandmarker } = vision as any;
-      const filesetResolver = await FilesetResolver.forVisionTasks(WASM_BASE);
-      landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-        baseOptions: { modelAssetPath: MODULE_URL + "/face_landmarker.task" },
-        runningMode: "IMAGE",
-        numFaces: Math.max(1, Math.min(5, isNaN(MAX_FACES) ? 2 : MAX_FACES)),
-        outputFaceBlendshapes: true,
-        outputFacialTransformationMatrixes: true,
-      });
-    } catch (e) {
-      console.warn('FaceLandmarker init failed, falling back', e);
-      landmarker = null;
+    const candidates = [
+      { moduleBase: `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`, wasmBase: `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm` },
+      { moduleBase: `https://unpkg.com/@mediapipe/tasks-vision@${MP_VERSION}`, wasmBase: `https://unpkg.com/@mediapipe/tasks-vision@${MP_VERSION}/wasm` },
+    ];
+    for (const c of candidates) {
+      try {
+        const { mod, lm } = await tryLoad(c.moduleBase, c.wasmBase);
+        vision = mod;
+        landmarker = lm;
+        return;
+      } catch (e) {
+        console.warn('FaceLandmarker load failed on', c.moduleBase, e);
+      }
     }
+    landmarker = null;
   })();
 
   await loadingPromise;
