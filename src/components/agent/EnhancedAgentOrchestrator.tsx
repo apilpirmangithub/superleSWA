@@ -372,7 +372,7 @@ Tx: ${result.txHash}
 
       if (result.success) {
         // Show initial success with transaction link
-        const submittedMessage = `Tx submitted ⏳\n↗ View: ${explorerBase}/tx/${result.txHash}`;
+        const submittedMessage = `Tx submitted ���\n↗ View: ${explorerBase}/tx/${result.txHash}`;
         chatAgent.addMessage("agent", submittedMessage);
 
         // Wait for confirmation
@@ -517,28 +517,24 @@ Thank you.`
         }
       } catch {}
 
-      // Embedding comparison (primary)
-      const [refEmb, capEmb] = await Promise.all([
-        getFaceEmbedding(referenceFile),
-        getFaceEmbedding(capture)
-      ]);
-
-      const simTh = parseFloat(process.env.NEXT_PUBLIC_FACE_SIM_THRESHOLD || '0.82');
-
-      if (refEmb && capEmb) {
-        const sim = cosineSimilarity(refEmb, capEmb);
-        if (sim >= simTh) {
+      // Advanced embedding comparison with multi-augmentation (robust to pose/rotation/flip)
+      const simTh = parseFloat(process.env.NEXT_PUBLIC_FACE_SIM_THRESHOLD || '0.86');
+      try {
+        const { compareFacesAdvanced } = await import("@/lib/utils/face");
+        const { best, refCount, probeCount } = await compareFacesAdvanced(referenceFile, capture, { rotations: [-25, -15, 0, 15, 25], allowFlip: true });
+        if (best >= simTh) {
           setAwaitingIdentity(false);
           setToast('Identity verified ✅');
-          chatAgent.addMessage('agent', `Identity verified (similarity ${sim.toFixed(3)} ≥ ${simTh}). Proceeding to registration.`);
+          chatAgent.addMessage('agent', `Identity verified (best similarity ${best.toFixed(3)} ≥ ${simTh}). Proceeding to registration.`);
           chatAgent.processPrompt('Continue Registration', referenceFile, aiDetectionResult);
           return;
+        } else {
+          setToast('Identity mismatch ❌');
+          chatAgent.addMessage('agent', `Identity check failed (best similarity ${best.toFixed(3)} < ${simTh}). Try again with clearer, front-facing photo.`);
+          chatAgent.addMessage('agent', 'You can take another photo or submit for review.', ['Take Photo', 'Submit for Review']);
+          return;
         }
-        setToast('Identity mismatch ❌');
-        chatAgent.addMessage('agent', `Identity check failed (similarity ${sim.toFixed(3)} < ${simTh}). Please retake photo or upload proof.`);
-        chatAgent.addMessage('agent', 'You can take another photo or submit for review.', ['Take Photo', 'Submit for Review']);
-        return;
-      }
+      } catch {}
 
       // Fallback: perceptual dHash if face embedding not available
       const hashSize = Number.parseInt(process.env.NEXT_PUBLIC_SAFE_IMAGE_DHASH_SIZE || '8', 10);
