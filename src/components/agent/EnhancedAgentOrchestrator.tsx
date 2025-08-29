@@ -37,6 +37,7 @@ export function EnhancedAgentOrchestrator() {
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [awaitingIdentity, setAwaitingIdentity] = useState<boolean>(false);
   const [dupCheck, setDupCheck] = useState<{ checked: boolean; found: boolean; tokenId?: string } | null>(null);
+  const [refTemplates, setRefTemplates] = useState<Float32Array[] | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [showCamera, setShowCamera] = useState(false);
