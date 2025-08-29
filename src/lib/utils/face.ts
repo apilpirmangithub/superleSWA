@@ -290,3 +290,77 @@ export function cosineSimilarity(a: FaceEmbedding, b: FaceEmbedding): number {
   const denom = Math.sqrt(na) * Math.sqrt(nb) || 1;
   return dot / denom;
 }
+
+export async function getAugmentedEmbeddings(file: File, rotations: number[] = [-25, -15, 0, 15, 25], flips: boolean[] = [false, true]): Promise<FaceEmbedding[]> {
+  if (typeof window === 'undefined') return [];
+  const session = await ensureRecognizer();
+  if (!session) return [];
+  const bitmap = await bitmapFromFile(file);
+  const box = await detectFaceBox(bitmap);
+  if (!box) return [];
+
+  const margin = 0.3;
+  const cx = Math.max(0, Math.floor(box.x - box.width * margin));
+  const cy = Math.max(0, Math.floor(box.y - box.height * margin));
+  const cw = Math.min(bitmap.width - cx, Math.floor(box.width * (1 + 2 * margin)));
+  const ch = Math.min(bitmap.height - cy, Math.floor(box.height * (1 + 2 * margin)));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = cw; canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return [];
+
+  const ort: any = (window as any).ort;
+  const embs: FaceEmbedding[] = [];
+
+  for (const flip of flips) {
+    for (const deg of rotations) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cw, ch);
+      ctx.translate(cw / 2, ch / 2);
+      if (flip) ctx.scale(-1, 1);
+      const rad = (deg * Math.PI) / 180;
+      ctx.rotate(rad);
+      ctx.drawImage(bitmap as any, cx, cy, cw, ch, -cw / 2, -ch / 2, cw, ch);
+
+      const imgData = ctx.getImageData(0, 0, cw, ch);
+      const chw = toCHWFloat(imgData, INPUT_SIZE, CHANNEL_ORDER);
+      const input = new ort.Tensor('float32', chw, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+      const feeds: Record<string, any> = {};
+      const inName = session.inputNames?.[0] || 'data';
+      feeds[inName] = input;
+      try {
+        const results = await session.run(feeds);
+        const outName = session.outputNames?.[0] || Object.keys(results)[0];
+        const output = results[outName];
+        const feat = output?.data as Float32Array | undefined;
+        if (!feat) continue;
+        let sum = 0;
+        for (let i = 0; i < feat.length; i++) sum += feat[i] * feat[i];
+        const norm = Math.sqrt(sum) || 1;
+        const emb = new Float32Array(feat.length);
+        for (let i = 0; i < feat.length; i++) emb[i] = feat[i] / norm;
+        embs.push(emb);
+      } catch {}
+    }
+  }
+
+  return embs;
+}
+
+export async function compareFacesAdvanced(ref: File, probe: File, opts?: { rotations?: number[]; allowFlip?: boolean }): Promise<{ best: number; refCount: number; probeCount: number }> {
+  const rotations = opts?.rotations ?? [-25, -15, 0, 15, 25];
+  const flips = (opts?.allowFlip ?? true) ? [false, true] : [false];
+  const [refEmb, probeEmb] = await Promise.all([
+    getAugmentedEmbeddings(ref, rotations, flips),
+    getAugmentedEmbeddings(probe, rotations, flips)
+  ]);
+  let best = 0;
+  for (const a of refEmb) {
+    for (const b of probeEmb) {
+      const s = cosineSimilarity(a, b);
+      if (s > best) best = s;
+    }
+  }
+  return { best, refCount: refEmb.length, probeCount: probeEmb.length };
+}
