@@ -444,6 +444,26 @@ AI Detected: ${result.aiDetected ? 'Yes' : 'No'} (${((result.aiConfidence || 0) 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Prepare multi-shot reference templates when identity is required
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (awaitingIdentity && referenceFile) {
+        try {
+          chatAgent.updateStatus('Preparing identity templates...');
+          const { getAugmentedEmbeddings } = await import('@/lib/utils/face');
+          const tmpls = await getAugmentedEmbeddings(referenceFile, [-25, -15, 0, 15, 25], [false, true]);
+          if (!cancelled) setRefTemplates(tmpls);
+        } catch {
+          if (!cancelled) setRefTemplates(null);
+        }
+      } else {
+        setRefTemplates(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [awaitingIdentity, referenceFile, chatAgent]);
+
   const handleButtonClick = useCallback((buttonText: string) => {
     if (buttonText === "Register IP") {
       // Start register flow by asking for file directly (no chat prompt)
